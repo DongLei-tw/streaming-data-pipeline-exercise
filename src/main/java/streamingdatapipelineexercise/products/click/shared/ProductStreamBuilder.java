@@ -41,6 +41,40 @@ public class ProductStreamBuilder {
         return operator;
     }
 
+    public static SingleOutputStreamOperator<Product> getProductStreamOperator(
+            Properties properties,
+            String kafkaTopic,
+            StreamExecutionEnvironment env) {
+        var schemaContent = getSchemaContent();
+
+        var schema = new Schema.Parser().parse(schemaContent);
+
+        var deserializationSchema = ConfluentRegistryAvroDeserializationSchema.forGeneric(
+                schema,
+                Config.SCHEMA_REGISTRY_SERVER
+        );
+
+        var consumer = new FlinkKafkaConsumer<>(kafkaTopic, deserializationSchema, properties);
+        consumer.setStartFromEarliest();
+
+        var streamSource = env.addSource(consumer);
+
+        var operator = streamSource.map((MapFunction<GenericRecord, Product>) value -> {
+            Utf8 itemId = (Utf8) value.get("itemId");
+            Utf8 description = (Utf8) value.get("description");
+            long count = (long) value.get("count");
+
+            return new Product(
+                    itemId.toString(),
+                    description.toString(),
+                    count);
+        });
+
+        return operator;
+    }
+
+
+
     private static String getSchemaContent() {
 
         var schemaString = "{\n" +

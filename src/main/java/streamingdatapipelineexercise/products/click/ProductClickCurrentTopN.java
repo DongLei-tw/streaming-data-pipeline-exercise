@@ -7,6 +7,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.SlidingProcessingTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.util.Collector;
 import streamingdatapipelineexercise.examples.click.shared.Config;
@@ -92,6 +93,36 @@ public class ProductClickCurrentTopN {
         streamTableEnvironment.toChangelogStream(topNTable)
                 .print("topNTable-toChangelogStream");
 
+
+        var productStream = ProductStreamBuilder
+                .getProductStreamOperator(properties, "product", env)
+                .keyBy(Product::getItemId)
+                .reduce((ReduceFunction<Product>) (pre, next) -> next);
+        productStream.print("productStream");
+        var productTable = streamTableEnvironment.fromDataStream(
+                productStream,
+                Schema.newBuilder().primaryKey("itemId").build()
+        );
+        productTable.printSchema();
+
+        // join table
+        var rightTable = productTable.renameColumns($("itemId").as("product_itemId"));
+        rightTable.printSchema();
+        streamTableEnvironment.toChangelogStream(rightTable).print("productTable-toChangelogStream");
+        var joinedTable = topNTable
+                .join(rightTable)
+                .where($("itemId").isEqual($("product_itemId")))
+                .select(
+                        $("itemId"),
+                        $("description"),
+                        $("count"),
+                        $("startTime"),
+                        $("endTime")
+                );
+        joinedTable.printSchema();
+
+        streamTableEnvironment.toChangelogStream(joinedTable).print("joinedTable-toChangelogStream");
+
         final String tableName = "product_click";
         final String jdbcURL = Config.JDBC_URL;
         final String username = Config.JDBC_USERNAME;
@@ -116,5 +147,7 @@ public class ProductClickCurrentTopN {
                 ")";
 
         streamTableEnvironment.executeSql(statement);
+
+        joinedTable.executeInsert(tableName);
     }
 }
